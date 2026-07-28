@@ -1,18 +1,14 @@
 # Eleventh
 
-Masked diffusion breaks from the way language models have always written. Eleventh is a small experiment in it. Drag a plain text file of a book/text onto the white window. The model learns that book alone — every weight trained from scratch, every word its first — and after about twenty minutes begins generating pages in its voice, one after another, without stopping. 
+Eleventh is a small experiment in masked diffusion, a generative modelling approach for discrete data, including text, that adapts the principles of diffusion models to sequences of tokens instead of continuous values like pixels. Drag a plain text file of a book/text onto the white window. The model learns that book alone — every weight trained from scratch, every word its first — and after about twenty minutes begins generating pages in its voice, one after another, without stopping. 
 
-But this happens without 'autoregression'. Most language models are autoregressive, writing the way we read, one token after the next, left to right. Masked diffusion models get there via a different route: a page starts as pure noise, and the model revises all positions at once until the noise resolves into text. It doesn't arrive left to right. It arrives all at once, badly, and then improves.
-
-Put simply, training corrupts and generation undoes it.
-
-The model itself is a bidirectional transformer of about 12 million parame — six layers, trained from nothing on a single file, on a laptop, in MLX. It's roughly one ten-thousandth the size of the models people mean when they say "model." That should be the the point: a model small enough to fail clearly.
-
-The title comes from the training corpus that I initially used. _De architectura_ — Vitruvius' paradigmatic treatise on building, the only architectural work to survive intact from antiquity — was written in ten books. Trained on all ten, the model doesn't summarise or imitate; it extends it, reaching for an eleventh book that reads like the author's own hand continuing past where he stopped. But that's also not the case. 
-
-Ten books read closely and understood not at all in the Eleventh.
+The title comes from the training corpus that I initially used. _De architectura_ — Vitruvius' paradigmatic treatise on building, the only architectural work to survive intact from antiquity — was written in ten books. Trained on all ten, the model doesn't summarise or imitate; it extends it, reaching for an eleventh book that reads like the author's own hand continuing past where he stopped. Ten books read closely and understood not at all in the Eleventh.
 
 ## Reverse Corruption
+
+Masked diffusion departs from the autoregressive generation paradigm that has historically defined transformer-based language models. Autoregressive models oft-write the way we read, one token after the next, left to right. Masked diffusion models get there via a different route: a page starts as pure noise, and the model revises all positions at once until the noise resolves into text.  It doesn't arrive left to right. It arrives all at once, badly, and then improves. Put simply, training corrupts and generation undoes it
+
+In this case, the model itself is a bidirectional transformer of about 12 million parame — six layers, trained from nothing on a single file, on a laptop, in MLX. It's roughly one ten-thousandth the size of the models people mean when they say "model." That should be the the point: a model small enough to fail clearly.
 
 A 100k-word corpus is negligible by training standards, and the output reflects it: locally convincing, globally unmoored. It reproduces the source's vocabulary and cadence precisely while making claims that decay over a paragraph. I treat this as the result. Nothing the model produces can be traced to text it saw elsewhere. (There is no elsewhere).
 
