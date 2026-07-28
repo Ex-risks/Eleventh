@@ -1,8 +1,8 @@
 # Eleventh
 
-Eleventh is a small experiment in masked diffusion language modeling. Drag a plain text file onto the white window. The model reads that book and nothing else — no pretraining, no borrowed weights, no other language it has ever seen — and after about twenty minutes it begins to generate pages in the book's voice, and does not stop.
+Eleventh is a small experiment in masked diffusion language modeling. Drag a plain text file onto the white window. The model reads that book and nothing else, no pretraining, no borrowed weights, no other language it has ever seen and after about twenty minutes it begins to generate pages in the book's voice, and does not stop.
 
-Most language models are autoregressive, writing the way we read — one token after the next, left to right. Masked diffusion models get there via a different route: a page starts as pure noise, and the model revises all positions at once until the noise resolves into text. It doesn't arrive left to right. It arrives all at once, badly, and then improves. 
+Most language models are autoregressive, writing the way we read, one token after the next, left to right. Masked diffusion models get there via a different route: a page starts as pure noise, and the model revises all positions at once until the noise resolves into text. It doesn't arrive left to right. It arrives all at once, badly, and then improves. 
 
 The model itself is a bidirectional transformer of about twelve million parameters — six layers, trained from nothing on a single file, on a laptop, in MLX. It's roughly one ten-thousandth the size of the models people mean when they say "model." That's the point: small enough to fail clearly.
 
