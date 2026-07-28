@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ELEVENTH</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400&display=swap">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --ink: #111111;
+    --mask: #cccccc;
+    --bg: #ffffff;
+    --ctrl: #aaaaaa;
+    --font: 'IBM Plex Mono', 'JetBrains Mono', 'Menlo', monospace;
+    /* Frame pacing: ms between revealed cells in the visual "settle" effect.
+       Lower = faster. This is the primary feel knob. */
+    --reveal-interval: 18;
+  }
+
+  html, body {
+    width: 100%; height: 100%;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font);
+    font-size: 16px;
+    line-height: 1.7;
+    overflow: hidden;
+    cursor: default;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ── Drop overlay (initial state) ───────────────────────────────────────── */
+  #drop-overlay {
+    position: fixed; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--bg);
+    z-index: 10;
+    transition: opacity 0.4s;
+  }
+  #drop-overlay.hidden { opacity: 0; pointer-events: none; }
+  #drop-prompt {
+    font-size: 15px;
+    color: #cccccc;
+    letter-spacing: 0.04em;
+    user-select: none;
+    pointer-events: none;
+  }
+  #drop-overlay.drag-over #drop-prompt { color: #999999; }
+
+  /* ── Page text column ────────────────────────────────────────────────────── */
+  #stage {
+    position: fixed; inset: 0;
+    display: flex; align-items: flex-start; justify-content: center;
+    padding-top: 8vh;
+    padding-bottom: 80px;
+  }
+
+  #page {
+    /* ~65-character measure at 16px monospace (ch = one character width) */
+    width: 65ch;
+    max-width: calc(100vw - 6ch);
+    word-break: break-all;
+    white-space: pre-wrap;
+    font-size: 16px;
+    line-height: 1.7;
+    color: var(--ink);
+    /* No transitions here — letters appear by DOM replacement, not animation */
+  }
+
+  /* Each character is a single inline span so position never shifts. */
+  .cell { display: inline; }
+  .cell.masked { color: var(--mask); }
+
+  /* Training display reuses #page with the same aesthetics */
+  #training-label {
+    position: fixed;
+    bottom: 40px; left: 50%;
+    transform: translateX(-50%);
+    font-size: 12px;
+    color: #cccccc;
+    letter-spacing: 0.08em;
+    pointer-events: none;
+    user-select: none;
+    transition: opacity 0.6s;
+  }
+  #training-label.hidden { opacity: 0; }
+
+  /* ── Controls ─────────────────────────────────────────────────────────────── */
+  #controls {
+    position: fixed;
+    bottom: 28px; right: 32px;
+    display: flex; gap: 20px; align-items: center;
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+  /* Show controls on mouse proximity to bottom-right corner */
+  #controls.visible { opacity: 1; }
+
+  .ctrl-btn {
+    background: none; border: none; padding: 0;
+    font-family: var(--font);
+    font-size: 12px;
+    color: var(--ctrl);
+    letter-spacing: 0.06em;
+    cursor: pointer;
+    user-select: none;
+    transition: color 0.15s;
+  }
+  .ctrl-btn:hover { color: #666666; }
+
+  /* Hidden file input for "book" button */
+  #file-input { display: none; }
+
+  /* Save flash */
+  #save-flash {
+    position: fixed;
+    bottom: 28px; left: 50%;
+    transform: translateX(-50%);
+    font-size: 11px;
+    color: #aaaaaa;
+    letter-spacing: 0.08em;
+    opacity: 0;
+    transition: opacity 0.4s;
+    pointer-events: none;
+    user-select: none;
+  }
+  #save-flash.show { opacity: 1; }
+</style>
+</head>
+<body>
+
+<!-- Drop zone shown before any file is loaded -->
+<div id="drop-overlay">
+  <span id="drop-prompt">drag a text file here to begin · press F for fullscreen</span>
+</div>
+
+<!-- Main text stage -->
+<div id="stage">
+  <div id="page"></div>
+</div>
+<div id="training-label" class="hidden">learning this book</div>
+
+<!-- Controls (bottom-right corner) -->
+<div id="controls">
+  <button class="ctrl-btn" id="btn-book">book</button>
+  <button class="ctrl-btn" id="btn-pause">pause</button>
+  <button class="ctrl-btn" id="btn-save">save</button>
+</div>
+<input type="file" id="file-input" accept=".txt,text/plain">
+
+<div id="save-flash"></div>
+
+<script>
+// ── Constants ──────────────────────────────────────────────────────────────
+const WS_URL = "ws://localhost:7979";
+const REVEAL_INTERVAL_MS = 16;  // ms between cell reveals (feel knob)
+const HOLD_AFTER_PAGE_MS = 3500; // ms to hold a complete page before clearing
+
+// ── State ──────────────────────────────────────────────────────────────────
+let ws = null;
+let cells = [];           // current DOM span array
+let paused = false;
+let frameQueue = [];      // pending frames from server
+let rendering = false;    // true while we're draining the queue
+let pageComplete = false;
+let holdTimer = null;
+
+// ── DOM refs ───────────────────────────────────────────────────────────────
+const overlay     = document.getElementById("drop-overlay");
+const page        = document.getElementById("page");
+const trainingLbl = document.getElementById("training-label");
+const controls    = document.getElementById("controls");
+const btnBook     = document.getElementById("btn-book");
+const btnPause    = document.getElementById("btn-pause");
+const btnSave     = document.getElementById("btn-save");
+const fileInput   = document.getElementById("file-input");
+const saveFlash   = document.getElementById("save-flash");
+
+// ── WebSocket ──────────────────────────────────────────────────────────────
+function connect() {
+  ws = new WebSocket(WS_URL);
+  ws.onopen = () => {
+    // Clear any "not connected" message.
+    const p = document.getElementById("drop-prompt");
+    if (p.textContent.startsWith("not connected") || p.textContent.startsWith("connecting")) {
+      p.textContent = "drag a text file here to begin · press F for fullscreen";
+    }
+  };
+  ws.onclose = () => {
+    if (!fileLoaded) setDropPrompt("connecting to engine…");
+    setTimeout(connect, 1000);
+  };
+  ws.onerror = () => {};  // onclose fires after onerror; suppress console noise
+  ws.onmessage = e => onMessage(JSON.parse(e.data));
+}
+
+function send(obj) {
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+}
+
+// ── Message handler ────────────────────────────────────────────────────────
+function onMessage(msg) {
+  if (msg.type === "training") {
+    showTraining(msg.sample, msg.step, msg.total);
+  } else if (msg.type === "frame") {
+    frameQueue.push(msg.cells);
+    if (!rendering) drainQueue();
+  } else if (msg.type === "done") {
+    // Page complete — hold, then clear for next page.
+    pageComplete = true;
+    holdTimer = setTimeout(() => {
+      clearPage();
+      pageComplete = false;
+    }, HOLD_AFTER_PAGE_MS);
+  } else if (msg.type === "saved") {
+    flashSave(msg.path);
+  } else if (msg.type === "error") {
+    console.error("[engine]", msg.message);
+  }
+}
+
+// ── Training display ───────────────────────────────────────────────────────
+function showTraining(sample, step, total) {
+  // Show overlay gone, training label visible.
+  overlay.classList.add("hidden");
+  trainingLbl.classList.remove("hidden");
+
+  // Render the live sample in the page column — same aesthetic, same font.
+  // Each character is a cell span; masked ones (·) get .masked class.
+  renderCells(Array.from(sample).map(ch => ({ char: ch, masked: ch === "·" })));
+}
+
+function endTraining() {
+  trainingLbl.classList.add("hidden");
+  controls.classList.add("visible");
+}
+
+// ── Cell rendering ─────────────────────────────────────────────────────────
+function buildPage(frameCells) {
+  // Build exactly SEQ_LEN span elements, one per cell.
+  page.innerHTML = "";
+  cells = [];
+  const frag = document.createDocumentFragment();
+  for (const c of frameCells) {
+    const span = document.createElement("span");
+    span.className = "cell" + (c.masked ? " masked" : "");
+    span.textContent = c.char;
+    frag.appendChild(span);
+    cells.push(span);
+  }
+  page.appendChild(frag);
+}
+
+function renderCells(frameCells) {
+  if (cells.length !== frameCells.length) {
+    buildPage(frameCells);
+    return;
+  }
+  // Update only cells that changed — avoids reflow.
+  for (let i = 0; i < frameCells.length; i++) {
+    const c = frameCells[i];
+    const span = cells[i];
+    const wasMasked = span.classList.contains("masked");
+    if (c.masked !== wasMasked || span.textContent !== c.char) {
+      span.textContent = c.char;
+      if (c.masked) span.classList.add("masked");
+      else span.classList.remove("masked");
+    }
+  }
+}
+
+// Drain the frame queue at a steady pace, revealing cells one frame at a time.
+// Frames from the server come in ~50ms intervals; we display them immediately
+// but only swap cells that actually changed, so the visual pace is controlled
+// by the server's denoising step frequency (not a client animation loop).
+function drainQueue() {
+  if (frameQueue.length === 0) { rendering = false; return; }
+  rendering = true;
+  const frame = frameQueue.shift();
+
+  // If this is the first frame after a clear, build the DOM.
+  if (cells.length === 0 && frame.length > 0) {
+    buildPage(frame);
+  } else {
+    renderCells(frame);
+  }
+
+  // If training is done and this is the first dream frame, hide training label.
+  if (!trainingLbl.classList.contains("hidden") && frame.some(c => !c.masked)) {
+    endTraining();
+  }
+
+  setTimeout(drainQueue, REVEAL_INTERVAL_MS);
+}
+
+function clearPage() {
+  frameQueue = [];
+  cells = [];
+  page.innerHTML = "";
+}
+
+// ── File upload ────────────────────────────────────────────────────────────
+function toBase64(arrayBuffer) {
+  // btoa(String.fromCharCode(...big array)) blows the call stack on any real
+  // book. Chunk it.
+  const bytes = new Uint8Array(arrayBuffer);
+  let binary = "";
+  const chunk = 8192;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
+
+function setDropPrompt(text) {
+  document.getElementById("drop-prompt").textContent = text;
+  overlay.classList.remove("hidden");
+}
+
+function uploadFile(file) {
+  if (!file) return;
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    setDropPrompt("not connected to engine — try relaunching");
+    return;
+  }
+  const reader = new FileReader();
+  reader.onerror = () => setDropPrompt("could not read file");
+  reader.onload = () => {
+    try {
+      const b64 = toBase64(reader.result);
+      send({ type: "file", name: file.name, data: b64 });
+      fileLoaded = true;
+      overlay.classList.add("hidden");
+      clearPage();
+      trainingLbl.classList.remove("hidden");
+      controls.classList.remove("visible");
+    } catch (e) {
+      setDropPrompt("error: " + e.message);
+      console.error(e);
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+// ── Drag-and-drop (whole window) ───────────────────────────────────────────
+document.addEventListener("dragover", e => {
+  e.preventDefault();
+  overlay.classList.add("drag-over");
+});
+document.addEventListener("dragleave", e => {
+  if (e.relatedTarget === null) overlay.classList.remove("drag-over");
+});
+document.addEventListener("drop", e => {
+  e.preventDefault();
+  overlay.classList.remove("drag-over");
+  const file = e.dataTransfer.files[0];
+  if (file) uploadFile(file);
+});
+
+// ── Controls ───────────────────────────────────────────────────────────────
+btnBook.addEventListener("click", () => fileInput.click());
+fileInput.addEventListener("change", () => { if (fileInput.files[0]) uploadFile(fileInput.files[0]); });
+
+btnPause.addEventListener("click", () => {
+  paused = !paused;
+  btnPause.textContent = paused ? "resume" : "pause";
+  send({ type: paused ? "pause" : "resume" });
+});
+
+btnSave.addEventListener("click", () => send({ type: "save" }));
+
+// Show controls when mouse nears bottom-right (within 120px).
+document.addEventListener("mousemove", e => {
+  const nearRight = e.clientX > window.innerWidth - 120;
+  const nearBottom = e.clientY > window.innerHeight - 80;
+  controls.classList.toggle("visible", nearRight && nearBottom);
+});
+
+// ── Save flash ─────────────────────────────────────────────────────────────
+function flashSave(path) {
+  const name = path.split("/").pop();
+  saveFlash.textContent = `saved: ${name}`;
+  saveFlash.classList.add("show");
+  setTimeout(() => saveFlash.classList.remove("show"), 2200);
+}
+
+// ── Fullscreen — F key only, only once a file has been loaded ─────────────
+// (Don't go fullscreen before the file is dropped: the user can't drag from
+// Finder into a fullscreen Chrome window.)
+let fileLoaded = false;
+document.addEventListener("keydown", e => {
+  if ((e.key === "f" || e.key === "F") && fileLoaded) {
+    if (!document.fullscreenElement) document.documentElement.requestFullscreen?.();
+    else document.exitFullscreen?.();
+  }
+});
+
+// ── Boot ───────────────────────────────────────────────────────────────────
+connect();
+</script>
+</body>
+</html>
