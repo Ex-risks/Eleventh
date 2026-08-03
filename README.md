@@ -1,56 +1,54 @@
 # Eleventh
 
-Eleventh is a small experiment in masked diffusion, a generative modelling approach for discrete data, including text, that adapts the principles of diffusion models to sequences of tokens instead of continuous values like pixels. Drag a plain text file of a book/text onto the white window. The model learns that book alone — every weight trained from scratch, every word its first — and after about twenty minutes begins generating pages in its voice, one after another, without stopping. 
+Eleventh is an experiment in masked diffusion: a generative method for discrete data that applies the logic of diffusion models to sequences of tokens rather than to pixels. Drag a plain text file onto the white window. The model learns that file, training weights from scratch — and after twenty minutes begins producing pages in its voice, ad infinitum. 
 
-The title comes from the training corpus that I initially used. _De architectura_ — Vitruvius' paradigmatic treatise on building, the only architectural work to survive intact from antiquity — was written in ten books. Trained on all ten, the model doesn't summarise or imitate; it extends it, reaching for an eleventh book that reads like the author's own hand continuing past where he stopped. Ten books read closely and understood not at all in the Eleventh.
+The name comes from the training corpus. *De architectura*, Vitruvius' treatise on building and the only architectural work to survive intact from antiquity, was written in ten books. Trained on all ten, the model extends it, reaching for an eleventh book that reads like the author's hand continuing past where he stopped. Ten books read closely and understood not at all.
 
-## Reverse Corruption
+## Reverse corruption
 
-Masked diffusion departs from the autoregressive generation paradigm that has historically defined transformer-based language models. Autoregressive models oft-write the way we read, one token after the next, left to right. Masked diffusion models get there via a different route: a page starts as pure noise, and the model revises all positions at once until the noise resolves into text.  It doesn't arrive left to right. It arrives all at once, badly, and then improves. Put simply, training corrupts and generation undoes it
+Autoregressive models write the way we read: one token after the next, left to right. Masked diffusion arrives differently. A page begins as noise, and the model revises every position at once until the noise resolves into text. It arrives all at once, badly, and then improves. In other words, training corrupts; generation undoes the corruption.
 
-In this case, the model itself is a bidirectional transformer of about 12 million parame — six layers, trained from nothing on a single file, on a laptop, in MLX. It's roughly one ten-thousandth the size of the models people mean when they say "model." That should be the the point: a model small enough to fail clearly.
+The model is a bidirectional transformer of about twelve million parameters — six layers, trained on a single file, on a MacBook Pro, in MLX. Roughly one ten-thousandth the size of the models people mean when they say model. That is the point. Small enough to fail legibly.
 
-A 100k-word corpus is negligible by training standards, and the output reflects it: locally convincing, globally unmoored. It reproduces the source's vocabulary and cadence precisely while making claims that decay over a paragraph. I treat this as the result. Nothing the model produces can be traced to text it saw elsewhere. (There is no elsewhere).
+A hundred thousand words is negligible by training standards, and the output shows it: locally convincing, globally unmoored. It reproduces the source's vocabulary and cadence exactly while making claims that decay across a paragraph. I treat that as the result. Nothing it produces can be traced to text it saw elsewhere, because there is no elsewhere.
 
-Training corrupts the book on purpose. Take a passage, hide some fraction of its tokens behind a `[mask]` symbol — sometimes a tenth, sometimes nearly all of them — and ask the model to restore what was hidden. It sees the whole passage at once and has to reason inward from both directions. Do that a few thousand times and it learns the shape of the hole a missing word leaves.
+Training hides tokens behind a `[mask]` symbol — sometimes a tenth of a passage, sometimes nearly all of it — and asks the model to restore them. It sees the whole passage at once and reasons inward from both directions. A few thousand repetitions and it learns the shape of the hole a missing word leaves.
 
-Generation runs that process in reverse. The page starts entirely masked — four hundred and fifty characters of nothing. At each step the model proposes a token for every empty position and reports a confidence for each. I keep only the ones it's most sure of, freeze them, re-mask the rest, and run again with those tokens now visible as context. 
+Generation runs the process backwards. The page starts fully masked: four hundred and fifty characters of nothing. At each step the model proposes a token for every empty position and reports a confidence. I keep the confident ones, freeze them, re-mask the rest, and run again with the frozen tokens as context.
 
-Reveals follow a cosine schedule: sparse early, when the page is empty and every guess is close to a coin flip; dense late, once the surrounding text starts arguing for what belongs in the remaining gaps. Ninety-six steps later, the page is full.
+Reveals follow a cosine schedule — sparse early, when the page is empty and every guess approaches a coin flip; dense late, once the surrounding text argues for what belongs in the gaps. Ninety-six steps and the page is full.
 
-This loop is the essential mechanism. Predicting all positions at once treats them as independent, which is not the case — "the" and "circumference" are each plausible in many slots, but jointly plausible in few. Committing only the confident tokens each round, then re-running, lets every round condition on the last round's commitments.
+The loop is the mechanism. Predicting all positions simultaneously treats them as independent, which they are not: *the* and *circumference* are each plausible in many slots and jointly plausible in few. Committing only the confident tokens, then re-running, lets each round condition on the last.
 
-The reveal on screen is therefore, the actual inference, happening at the speed it happens.
+What appears on screen is the inference itself, at the speed it happens.
 
-## Productive Failures
+## Productive failures
 
-Some interesting things I discovered. The first version worked on raw bytes — 256 characters, the alphabet as the alphabet. It produced fluent gibberish for weeks: letters in the right proportions, spaces in plausible places, and no words.
+The first version worked on raw bytes — 256 characters, the alphabet as the alphabet. It produced fluent gibberish for weeks: letters in the right proportions, spaces in plausible places, no words.
 
-I assumed it was undertrained and gave it more steps, which did nothing. The loss curve was flat, (I read the flatness as a wall but It wasn't). Measured properly, the model had learned the frequency of letters and stopped — and the number I was watching couldn't have told me otherwise, since it averaged over every corruption level, including the ones where the page is entirely hidden and nothing better than letter frequencies is possible. Only masked positions produce loss, so their count varies with *t*; weighting each by 1/*t* cancels that out, giving every corruption rate equal influence on the gradient.
+I assumed it was undertrained and gave it more steps. Nothing changed. The loss curve was flat, and I read the flatness as a wall. It was not a wall. Measured properly, the model had learned letter frequencies and stopped, and the number I was watching could not have told me otherwise: it averaged over every corruption level, including those where the page is entirely hidden and nothing better than letter frequency is available. Only masked positions produce loss, so their count varies with *t*. Weighting each by 1/*t* cancels the variation and gives every corruption rate equal influence on the gradient.
 
-So I measured what the model could do when it actually had context. Given ninety percent of a passage, it predicted the missing tenth at 3.00 nats per byte. A bigram lookup table — a count of which letter follows which, no learning at all — does it in 2.34. The model was losing to a lookup table, which is a clarifying kind of failure.
+So I measured what the model could do with context. Given ninety percent of a passage, it predicted the missing tenth at 3.00 nats per byte. A bigram lookup table — a count of which letter follows which, no learning at all — does it in 2.34. The model was losing to a lookup table, which is a clarifying kind of failure.
 
-Then I gave it a task that required attention and nothing else, and it solved that to four decimal places. The model was fine — it was spelling. Every scrap of its capacity was going into learning that `t-h-e` is a word, with nothing left over for what words do to each other. At character level, a book this size is simply too little evidence for too hard a job.
+Then I gave it a task that required attention and nothing else. It solved that to four decimal places. The model was fine. It was spelling. Every scrap of capacity went into learning that `t-h-e` is a word, with nothing left for what words do to each other. At character level, a book this size is too little evidence for too hard a job.
 
-The fix was to stop making it spell. The machine now learns a small vocabulary — two thousand fragments — from the dropped-in book itself, before training begins; it takes about a second. Sequences get three and a half times shorter, every prediction gets easier, and the model crosses in twenty minutes a distance it couldn't cross in hours.
+The fix was to stop making it spell. The machine now learns a two-thousand-fragment vocabulary from the dropped-in book before training begins; it takes about a second. Sequences shorten by a factor of three and a half, every prediction gets easier, and the model crosses in twenty minutes a distance it could not cross in hours.
 
-There's a moment in the training log where this happens. For three thousand steps the loss sits just under the score of a model that has learned only how often each word appears, and then it falls away, and the samples become sentences.
+The training log records the moment. For three thousand steps the loss sits just under the score of a model that has learned only how often each word appears. Then it falls away, and the samples become sentences.
 
 ## Where it stands
 
-It works, in an interesting way, and it's early. Fed Vitruvius' *Ten Books on Architecture*, it returns pages about compasses and circumferences, about the planes of water and the parts of a ship — recognisably the book, recognisably not the book. It repeats itself. The grammar frays at the edges. The loss was still falling when I stopped it, which means the twenty minutes is a budget, not a limit.
+It works, and it is early. Fed the *Ten Books*, it returns pages about compasses and circumferences, the planes of water, the parts of a ship — recognisably the book, recognisably not the book. It repeats itself. The grammar frays at the edges. The loss was still falling when I stopped it, which means twenty minutes is a budget, not a limit.
 
-Open questions I'm working on: how small the vocabulary can get before the voice goes with it; and whether a page can be seeded from the tail of the one before it, so the machine generates something continuous rather than a stack of unrelated pages.
+Open questions: how small the vocabulary can get before the voice goes with it, and whether a page can be seeded from the tail of the one before it, so the machine generates something continuous rather than a stack of unrelated pages (although that seems fun as well). 
 
 ## Running it
 
-Double-click `launch.command`. A white window opens. Drag any `.txt` file onto it. `F` toggles fullscreen. Apple silicon only — it's built on MLX.
+Double-click `launch.command`. A white window opens. Drag any `.txt` file onto it. `F` toggles fullscreen. Apple silicon only — it is built on MLX.
 
 ---
 
 ### References
-
-Some references that helped me get to this point:
 
 1. Austin, J., Johnson, D., Ho, J., Tarlow, D., van den Berg, R. (2021). *Structured Denoising Diffusion Models in Discrete State-Spaces.* NeurIPS.
 2. Chang, H., Zhang, H., Jiang, L., Liu, C., Freeman, W. T. (2022). *MaskGIT: Masked Generative Image Transformer.* CVPR.
